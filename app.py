@@ -1,9 +1,35 @@
 import streamlit as st
 import pickle
 import pandas as pd
+import numpy as np
 from PIL import Image
 import warnings
 warnings.filterwarnings('ignore')
+
+
+def predict_with_confidence(m, text_vector):
+    """
+    Returns (prediction, confidence) for any model.
+    Uses predict_proba if available (Naive Bayes, Random Forest).
+    Falls back to decision_function + softmax for models like LinearSVC
+    that don't support predict_proba.
+    """
+    pred = m.predict(text_vector)[0]
+
+    if hasattr(m, "predict_proba"):
+        confidence = max(m.predict_proba(text_vector)[0])
+    elif hasattr(m, "decision_function"):
+        scores = m.decision_function(text_vector)[0]
+        # decision_function can return a single score for binary,
+        # or an array of per-class scores for multi-class (our case)
+        scores = np.atleast_1d(scores)
+        exp_scores = np.exp(scores - np.max(scores))  # softmax, numerically stable
+        probs = exp_scores / exp_scores.sum()
+        confidence = max(probs)
+    else:
+        confidence = 0.95  # last-resort fallback
+
+    return pred, confidence
 
 st.set_page_config(page_title="Language Detection", page_icon="🌍", layout="wide")
 
@@ -73,8 +99,7 @@ elif page == "🔍 Detect Language":
                 else:
                     try:
                         text_vector = vectorizer.transform([text_input])
-                        pred = model.predict(text_vector)[0]
-                        confidence = max(model.predict_proba(text_vector)[0])
+                        pred, confidence = predict_with_confidence(model, text_vector)
                         
                         col1, col2, col3 = st.columns(3)
                         with col1:
@@ -88,8 +113,7 @@ elif page == "🔍 Detect Language":
                         st.markdown("### 🤖 All Models Prediction:")
                         results = []
                         for name, m in all_models.items():
-                            p = m.predict(text_vector)[0]
-                            conf = max(m.predict_proba(text_vector)[0]) if hasattr(m, 'predict_proba') else 0.95
+                            p, conf = predict_with_confidence(m, text_vector)
                             results.append({"Model": name, "Language": p, "Confidence": f"{conf:.2%}"})
                         
                         st.dataframe(pd.DataFrame(results), use_container_width=True)
@@ -117,8 +141,7 @@ elif page == "🔍 Detect Language":
                             for idx, text in enumerate(df['Text']):
                                 try:
                                     text_vector = vectorizer.transform([str(text)])
-                                    pred = model.predict(text_vector)[0]
-                                    confidence = max(model.predict_proba(text_vector)[0])
+                                    pred, confidence = predict_with_confidence(model, text_vector)
                                     predictions.append(pred)
                                     confidences.append(confidence)
                                 except:
